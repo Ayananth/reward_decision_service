@@ -72,6 +72,39 @@ export RATE_LIMIT_MAX_REQUESTS=30
 export RATE_LIMIT_WINDOW_SECONDS=60
 ```
 
+## Run With Docker Compose (API + Redis)
+```bash
+docker compose up --build
+```
+
+Services:
+- API: `http://localhost:8000`
+- Redis: `localhost:6379`
+
+Stop containers:
+```bash
+docker compose down
+```
+
+Optional: create a `.env` file if you want custom values (not required).  
+If no `.env` is provided, `docker-compose.yml` defaults are used.  
+You can start from `.env.example`.
+
+## Run With Docker (API Only)
+Build:
+```bash
+docker build -t reward-decision-service .
+```
+
+Run (expects Redis already available):
+```bash
+docker run --rm -p 8000:8000 \
+  -e CACHE_BACKEND=redis \
+  -e REDIS_HOST=host.docker.internal \
+  -e REDIS_PORT=6379 \
+  reward-decision-service
+```
+
 ## Local Setup
 ```bash
 python3 -m venv .venv

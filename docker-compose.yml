@@ -1,0 +1,38 @@
+services:
+  reward-decision-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: reward-decision-service
+    environment:
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_DB: ${REDIS_DB:-0}
+      CACHE_BACKEND: ${CACHE_BACKEND:-redis}
+      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-30}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+      POLICY_CONFIG_PATH: ${POLICY_CONFIG_PATH:-/app/config/policy.json}
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: reward-decision-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    restart: unless-stopped
+
+volumes:
+  redis_data:
