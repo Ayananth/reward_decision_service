@@ -53,17 +53,23 @@ class RewardService:
 
             seed = self.build_decision_seed(request)
             persona = self.get_persona(request.user_id)
-
-            xp = self.calculate_xp(request.amount, persona)
-            reward_type = self.pick_reward_type(seed)
-            reward_value = self.calculate_reward_value(request.amount, reward_type)
             reason_codes: list[str] = []
 
+            xp = self.calculate_xp(request.amount, persona)
+            reward_type = self.pick_reward_type(seed, reason_codes)
+            reward_value = self.calculate_reward_value(request.amount, reward_type)
+
             if reward_type != "XP" and reward_value > 0:
-                if not self.consume_cac_budget(request.user_id, persona, reward_value):
+                if self.is_reward_cooldown_active(request.user_id):
+                    reward_type = "XP"
+                    reward_value = 0
+                    reason_codes.append("COOLDOWN_ACTIVE")
+                elif not self.consume_cac_budget(request.user_id, persona, reward_value):
                     reward_type = "XP"
                     reward_value = 0
                     reason_codes.append("CAC_LIMIT")
+                else:
+                    self.mark_last_reward(request.user_id, reward_type)
 
             response = RewardResponse(
                 decision_id=str(uuid.uuid5(uuid.NAMESPACE_OID, seed)),
@@ -95,7 +101,12 @@ class RewardService:
         xp = amount * float(CONFIG["xp_per_rupee"]) * multiplier
         return max(0, int(min(xp, float(CONFIG["max_xp_per_txn"]))))
 
-    def pick_reward_type(self, seed: str) -> str:
+    def pick_reward_type(self, seed: str, reason_codes: list[str]) -> str:
+        feature_flags = CONFIG.get("feature_flags", {})
+        if feature_flags.get("prefer_xp_mode", False):
+            reason_codes.append("PREFER_XP_MODE")
+            return "XP"
+
         weights = CONFIG.get("reward_type_weights", {})
         reward_type = self.weighted_reward_choice(seed, weights)
         if reward_type not in SUPPORTED_REWARD_TYPES:
@@ -130,6 +141,21 @@ class RewardService:
         rates = CONFIG.get("reward_value_rates", {})
         rate = float(rates.get(reward_type, 0))
         return max(0, int(amount * rate))
+
+    def is_reward_cooldown_active(self, user_id: str) -> bool:
+        if not CONFIG.get("feature_flags", {}).get("cooldown_on_last_reward", False):
+            return False
+        return cache.get(f"last_reward:{user_id}") is not None
+
+    def mark_last_reward(self, user_id: str, reward_type: str) -> None:
+        cooldown_seconds = int(CONFIG.get("reward_cooldown_seconds", 0))
+        if cooldown_seconds <= 0:
+            return
+        payload = {
+            "reward_type": reward_type,
+            "at_utc": datetime.utcnow().isoformat() + "Z",
+        }
+        cache.set(f"last_reward:{user_id}", payload, ttl=cooldown_seconds)
 
     def consume_cac_budget(self, user_id: str, persona: str, reward_value: int) -> bool:
         today = datetime.utcnow().date()
