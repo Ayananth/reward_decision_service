@@ -1,0 +1,30 @@
+{
+  "policy_version": "v1",
+  "xp_per_rupee": 2,
+  "max_xp_per_txn": 100,
+  "persona_multipliers": {
+    "NEW": 1.2,
+    "RETURNING": 1.0,
+    "POWER": 0.8
+  },
+  "daily_cac_cap": {
+    "NEW": 500,
+    "RETURNING": 300,
+    "POWER": 200
+  },
+  "reward_type_weights": {
+    "CHECKOUT": 0.7,
+    "GOLD": 0.2,
+    "XP": 0.1
+  },
+  "reward_value_rates": {
+    "CHECKOUT": 0.1,
+    "GOLD": 0.2
+  },
+  "feature_flags": {
+    "prefer_xp_mode": false,
+    "cooldown_on_last_reward": false
+  },
+  "reward_cooldown_seconds": 3600,
+  "idempotency_ttl_seconds": 86400
+}
