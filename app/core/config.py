@@ -34,6 +34,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "cooldown_on_last_reward": False,
     },
     "reward_cooldown_seconds": 3600,
+    "persona_cache_ttl_seconds": 3600,
     "idempotency_ttl_seconds": 86400,
 }
 

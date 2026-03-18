@@ -26,5 +26,6 @@
     "cooldown_on_last_reward": false
   },
   "reward_cooldown_seconds": 3600,
+  "persona_cache_ttl_seconds": 3600,
   "idempotency_ttl_seconds": 86400
 }
