@@ -44,6 +44,9 @@ class CacheBackend(Protocol):
     ) -> bool:
         """Atomically increment only if the resulting value stays <= limit."""
 
+    def increment_rate_limit_counter(self, key: str, window_seconds: int) -> tuple[int, int]:
+        """Increment request count and return (count, remaining_window_ttl_seconds)."""
+
 
 class InMemoryCache:
     def __init__(self, default_ttl_seconds: int = 86400):
@@ -135,6 +138,21 @@ class InMemoryCache:
                 self._set_expiration(key, ttl)
             return True
 
+    def increment_rate_limit_counter(self, key: str, window_seconds: int) -> tuple[int, int]:
+        with self._lock:
+            self._purge_if_expired(key)
+            count = int(self._store.get(key, 0)) + 1
+            self._store[key] = count
+
+            if key not in self._expirations:
+                self._set_expiration(key, window_seconds)
+            elif self._expirations[key] <= time.time():
+                self._set_expiration(key, window_seconds)
+
+            expiry = self._expirations.get(key, time.time() + window_seconds)
+            ttl = max(1, int(expiry - time.time()))
+            return count, ttl
+
 
 class RedisCache:
     _RELEASE_LOCK_LUA = """
@@ -163,6 +181,18 @@ if ttl and ttl > 0 then
 end
 
 return new_value
+"""
+    _RATE_LIMIT_LUA = """
+local key = KEYS[1]
+local window_seconds = tonumber(ARGV[1])
+
+local current = redis.call("INCR", key)
+if current == 1 then
+    redis.call("EXPIRE", key, window_seconds)
+end
+
+local ttl = redis.call("TTL", key)
+return {current, ttl}
 """
 
     def __init__(self, default_ttl_seconds: int = 86400):
@@ -233,6 +263,12 @@ return new_value
             ttl,
         )
         return bool(result)
+
+    def increment_rate_limit_counter(self, key: str, window_seconds: int) -> tuple[int, int]:
+        result = self.client.eval(self._RATE_LIMIT_LUA, 1, key, window_seconds)
+        count = int(result[0])
+        ttl = int(result[1])
+        return count, max(1, ttl)
 
 
 def _build_cache() -> CacheBackend:
