@@ -5,9 +5,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN pip install --no-cache-dir uv
+
+COPY pyproject.toml README.md ./
+RUN uv sync --no-dev --no-install-project
+
 COPY . .
 
-RUN pip install --no-cache-dir .
+ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 

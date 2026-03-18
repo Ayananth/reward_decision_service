@@ -13,3 +13,6 @@ dependencies = [
     "redis>=6.0.0",
     "uvicorn>=0.42.0",
 ]
+
+[tool.setuptools]
+packages = ["app"]
