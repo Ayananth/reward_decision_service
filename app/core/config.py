@@ -36,6 +36,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "reward_cooldown_seconds": 3600,
     "persona_cache_ttl_seconds": 3600,
     "idempotency_ttl_seconds": 86400,
+    "idempotency_lock_ttl_seconds": 30,
+    "idempotency_wait_timeout_seconds": 5,
+    "idempotency_wait_interval_seconds": 0.05,
 }
 
 

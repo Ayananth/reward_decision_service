@@ -29,6 +29,12 @@ class CacheBackend(Protocol):
     def exists(self, key: str) -> bool:
         """Check whether a non-expired key exists."""
 
+    def acquire_lock(self, key: str, token: str, ttl: int = 30) -> bool:
+        """Acquire a lock key if absent. Returns True when acquired."""
+
+    def release_lock(self, key: str, token: str) -> bool:
+        """Release lock only when token matches. Returns True when released."""
+
 
 class InMemoryCache:
     def __init__(self, default_ttl_seconds: int = 86400):
@@ -82,8 +88,35 @@ class InMemoryCache:
             self._store.clear()
             self._expirations.clear()
 
+    def acquire_lock(self, key: str, token: str, ttl: int = 30) -> bool:
+        with self._lock:
+            self._purge_if_expired(key)
+            if key in self._store:
+                return False
+
+            self._store[key] = token
+            self._set_expiration(key, ttl)
+            return True
+
+    def release_lock(self, key: str, token: str) -> bool:
+        with self._lock:
+            self._purge_if_expired(key)
+            if self._store.get(key) != token:
+                return False
+
+            self._store.pop(key, None)
+            self._expirations.pop(key, None)
+            return True
+
 
 class RedisCache:
+    _RELEASE_LOCK_LUA = """
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+end
+return 0
+"""
+
     def __init__(self, default_ttl_seconds: int = 86400):
         if redis is None:
             raise RuntimeError("redis package is not installed")
@@ -128,6 +161,13 @@ class RedisCache:
 
     def exists(self, key: str) -> bool:
         return bool(self.client.exists(key))
+
+    def acquire_lock(self, key: str, token: str, ttl: int = 30) -> bool:
+        return bool(self.client.set(key, token, nx=True, ex=ttl))
+
+    def release_lock(self, key: str, token: str) -> bool:
+        result = self.client.eval(self._RELEASE_LOCK_LUA, 1, key, token)
+        return bool(result)
 
 
 def _build_cache() -> CacheBackend:

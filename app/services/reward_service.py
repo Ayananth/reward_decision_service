@@ -1,4 +1,5 @@
 import hashlib
+import time
 import uuid
 
 from app.cache.cache import cache
@@ -12,29 +13,64 @@ PERSONA_MAP = {
 SUPPORTED_REWARD_TYPES = {"XP", "CHECKOUT", "GOLD"}
 
 
+class IdempotencyConflictError(Exception):
+    pass
+
+
 class RewardService:
+    IDEM_TTL_SECONDS = int(CONFIG.get("idempotency_ttl_seconds", 86400))
+    IDEM_LOCK_TTL_SECONDS = int(CONFIG.get("idempotency_lock_ttl_seconds", 30))
+    IDEM_WAIT_TIMEOUT_SECONDS = float(CONFIG.get("idempotency_wait_timeout_seconds", 5))
+    IDEM_WAIT_INTERVAL_SECONDS = float(CONFIG.get("idempotency_wait_interval_seconds", 0.05))
     PERSONA_CACHE_TTL_SECONDS = int(CONFIG.get("persona_cache_ttl_seconds", 3600))
 
     def build_decision_seed(self, request: RewardRequest) -> str:
         return f"{request.txn_id}:{request.user_id}:{request.merchant_id}"
 
+    def build_idempotency_key(self, request: RewardRequest) -> str:
+        return f"idem:{request.txn_id}:{request.user_id}:{request.merchant_id}"
+
     def decide_reward(self, request: RewardRequest) -> RewardResponse:
-        seed = self.build_decision_seed(request)
-        persona = self.get_persona(request.user_id)
+        idem_key = self.build_idempotency_key(request)
+        lock_key = f"{idem_key}:lock"
+        lock_token = str(uuid.uuid4())
 
-        xp = self.calculate_xp(request.amount, persona)
-        reward_type = self.pick_reward_type(seed)
-        reward_value = self.calculate_reward_value(request.amount, reward_type)
+        cached_response = cache.get(idem_key)
+        if cached_response:
+            return RewardResponse.model_validate(cached_response)
 
-        return RewardResponse(
-            decision_id=str(uuid.uuid5(uuid.NAMESPACE_OID, seed)),
-            policy_version=str(CONFIG["policy_version"]),
-            reward_type=reward_type,
-            reward_value=reward_value,
-            xp=xp,
-            reason_codes=[],
-            meta={"persona": persona},
-        )
+        if not cache.acquire_lock(lock_key, lock_token, ttl=self.IDEM_LOCK_TTL_SECONDS):
+            cached_response = self.wait_for_idempotent_result(idem_key)
+            if cached_response:
+                return RewardResponse.model_validate(cached_response)
+            raise IdempotencyConflictError("Request is already being processed")
+
+        try:
+            cached_response = cache.get(idem_key)
+            if cached_response:
+                return RewardResponse.model_validate(cached_response)
+
+            seed = self.build_decision_seed(request)
+            persona = self.get_persona(request.user_id)
+
+            xp = self.calculate_xp(request.amount, persona)
+            reward_type = self.pick_reward_type(seed)
+            reward_value = self.calculate_reward_value(request.amount, reward_type)
+
+            response = RewardResponse(
+                decision_id=str(uuid.uuid5(uuid.NAMESPACE_OID, seed)),
+                policy_version=str(CONFIG["policy_version"]),
+                reward_type=reward_type,
+                reward_value=reward_value,
+                xp=xp,
+                reason_codes=[],
+                meta={"persona": persona},
+            )
+
+            cache.set(idem_key, response.model_dump(), ttl=self.IDEM_TTL_SECONDS)
+            return response
+        finally:
+            cache.release_lock(lock_key, lock_token)
 
     def get_persona(self, user_id: str) -> str:
         cache_key = f"persona:{user_id}"
@@ -86,3 +122,12 @@ class RewardService:
         rates = CONFIG.get("reward_value_rates", {})
         rate = float(rates.get(reward_type, 0))
         return max(0, int(amount * rate))
+
+    def wait_for_idempotent_result(self, idem_key: str) -> dict | None:
+        deadline = time.monotonic() + self.IDEM_WAIT_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            cached_response = cache.get(idem_key)
+            if cached_response:
+                return cached_response
+            time.sleep(self.IDEM_WAIT_INTERVAL_SECONDS)
+        return None
