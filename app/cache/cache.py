@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import copy
+import json
+import logging
+import os
 import threading
 import time
 from typing import Any, Protocol
+
+try:
+    import redis
+except ImportError:  # pragma: no cover
+    redis = None
+
+logger = logging.getLogger(__name__)
 
 
 class CacheBackend(Protocol):
@@ -73,5 +83,64 @@ class InMemoryCache:
             self._expirations.clear()
 
 
-cache: CacheBackend = InMemoryCache()
+class RedisCache:
+    def __init__(self, default_ttl_seconds: int = 86400):
+        if redis is None:
+            raise RuntimeError("redis package is not installed")
 
+        self.default_ttl_seconds = default_ttl_seconds
+        self.client = redis.Redis(
+            host=os.getenv("REDIS_HOST", "localhost"),
+            port=int(os.getenv("REDIS_PORT", "6379")),
+            db=int(os.getenv("REDIS_DB", "0")),
+            decode_responses=True,
+        )
+        # Fail fast so we can fallback to memory immediately.
+        self.client.ping()
+        logger.info(
+            "Connected to Redis cache host=%s port=%s db=%s",
+            os.getenv("REDIS_HOST", "localhost"),
+            os.getenv("REDIS_PORT", "6379"),
+            os.getenv("REDIS_DB", "0"),
+        )
+
+    def set(self, key: str, value: Any, ttl: int | None = None) -> None:
+        payload = json.dumps(value)
+        if ttl is None:
+            ttl = self.default_ttl_seconds
+
+        if ttl > 0:
+            self.client.setex(key, ttl, payload)
+        else:
+            self.client.set(key, payload)
+
+    def get(self, key: str) -> Any | None:
+        raw = self.client.get(key)
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+
+    def delete(self, key: str) -> bool:
+        return bool(self.client.delete(key))
+
+    def exists(self, key: str) -> bool:
+        return bool(self.client.exists(key))
+
+
+def _build_cache() -> CacheBackend:
+    backend = os.getenv("CACHE_BACKEND", "redis").lower()
+    if backend == "memory":
+        logger.info("Using in-memory cache backend (forced by CACHE_BACKEND=memory)")
+        return InMemoryCache()
+
+    try:
+        return RedisCache()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Redis unavailable, falling back to in-memory cache: %s", exc)
+        return InMemoryCache()
+
+
+cache: CacheBackend = _build_cache()
