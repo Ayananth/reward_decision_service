@@ -35,6 +35,15 @@ class CacheBackend(Protocol):
     def release_lock(self, key: str, token: str) -> bool:
         """Release lock only when token matches. Returns True when released."""
 
+    def increment_if_below_limit(
+        self,
+        key: str,
+        increment: int,
+        limit: int,
+        ttl: int = 86400,
+    ) -> bool:
+        """Atomically increment only if the resulting value stays <= limit."""
+
 
 class InMemoryCache:
     def __init__(self, default_ttl_seconds: int = 86400):
@@ -108,6 +117,24 @@ class InMemoryCache:
             self._expirations.pop(key, None)
             return True
 
+    def increment_if_below_limit(
+        self,
+        key: str,
+        increment: int,
+        limit: int,
+        ttl: int = 86400,
+    ) -> bool:
+        with self._lock:
+            self._purge_if_expired(key)
+            current = int(self._store.get(key, 0))
+            if (current + increment) > limit:
+                return False
+
+            self._store[key] = current + increment
+            if key not in self._expirations and ttl > 0:
+                self._set_expiration(key, ttl)
+            return True
+
 
 class RedisCache:
     _RELEASE_LOCK_LUA = """
@@ -115,6 +142,27 @@ if redis.call("GET", KEYS[1]) == ARGV[1] then
     return redis.call("DEL", KEYS[1])
 end
 return 0
+"""
+    _INCREMENT_IF_BELOW_LIMIT_LUA = """
+local key = KEYS[1]
+local increment = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+local ttl = tonumber(ARGV[3])
+
+local current = tonumber(redis.call("GET", key) or "0")
+if (current + increment) > limit then
+    return 0
+end
+
+local new_value = redis.call("INCRBY", key, increment)
+if ttl and ttl > 0 then
+    local key_ttl = redis.call("TTL", key)
+    if key_ttl < 0 then
+        redis.call("EXPIRE", key, ttl)
+    end
+end
+
+return new_value
 """
 
     def __init__(self, default_ttl_seconds: int = 86400):
@@ -167,6 +215,23 @@ return 0
 
     def release_lock(self, key: str, token: str) -> bool:
         result = self.client.eval(self._RELEASE_LOCK_LUA, 1, key, token)
+        return bool(result)
+
+    def increment_if_below_limit(
+        self,
+        key: str,
+        increment: int,
+        limit: int,
+        ttl: int = 86400,
+    ) -> bool:
+        result = self.client.eval(
+            self._INCREMENT_IF_BELOW_LIMIT_LUA,
+            1,
+            key,
+            increment,
+            limit,
+            ttl,
+        )
         return bool(result)
 
 

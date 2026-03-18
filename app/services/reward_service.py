@@ -1,6 +1,7 @@
 import hashlib
 import time
 import uuid
+from datetime import datetime, timedelta
 
 from app.cache.cache import cache
 from app.core.config import CONFIG
@@ -56,6 +57,13 @@ class RewardService:
             xp = self.calculate_xp(request.amount, persona)
             reward_type = self.pick_reward_type(seed)
             reward_value = self.calculate_reward_value(request.amount, reward_type)
+            reason_codes: list[str] = []
+
+            if reward_type != "XP" and reward_value > 0:
+                if not self.consume_cac_budget(request.user_id, persona, reward_value):
+                    reward_type = "XP"
+                    reward_value = 0
+                    reason_codes.append("CAC_LIMIT")
 
             response = RewardResponse(
                 decision_id=str(uuid.uuid5(uuid.NAMESPACE_OID, seed)),
@@ -63,7 +71,7 @@ class RewardService:
                 reward_type=reward_type,
                 reward_value=reward_value,
                 xp=xp,
-                reason_codes=[],
+                reason_codes=reason_codes,
                 meta={"persona": persona},
             )
 
@@ -122,6 +130,18 @@ class RewardService:
         rates = CONFIG.get("reward_value_rates", {})
         rate = float(rates.get(reward_type, 0))
         return max(0, int(amount * rate))
+
+    def consume_cac_budget(self, user_id: str, persona: str, reward_value: int) -> bool:
+        today = datetime.utcnow().date()
+        cac_key = f"cac:{user_id}:{today}"
+        cap = int(CONFIG["daily_cac_cap"][persona])
+        ttl = self.seconds_until_utc_day_end()
+        return cache.increment_if_below_limit(cac_key, reward_value, cap, ttl=ttl)
+
+    def seconds_until_utc_day_end(self) -> int:
+        now = datetime.utcnow()
+        next_midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
+        return max(1, int((next_midnight - now).total_seconds()))
 
     def wait_for_idempotent_result(self, idem_key: str) -> dict | None:
         deadline = time.monotonic() + self.IDEM_WAIT_TIMEOUT_SECONDS
