@@ -3,17 +3,23 @@
 Low-latency FastAPI microservice that returns deterministic reward decisions for transactions.
 
 ## Features
-- `POST /reward/decide` API contract with request/response validation
-- Deterministic reward decisioning from config
-- Idempotency (`txn_id + user_id + merchant_id`) with lock/wait handling
-- Cache-first architecture with Redis backend and in-memory fallback
-- Daily CAC cap enforcement with XP fallback
+
+- POST `/reward/decide` API with request/response validation  
+- Deterministic reward decisioning using config-driven rules  
+- Persona-based reward logic with multipliers (NEW, RETURNING, POWER)  
+- Deterministic reward selection using hash-based weighted distribution  
+- Idempotency (`txn_id + user_id + merchant_id`) with lock/wait handling  
+- Distributed locking to ensure safe concurrent processing  
+- Cache-first architecture with Redis backend and in-memory fallback  
+- Daily CAC cap enforcement with XP fallback  
+- Atomic CAC budget tracking to prevent race conditions  
+- Reward cooldown mechanism to limit frequent monetary rewards  
 - Feature flags:
   - `prefer_xp_mode`
   - `cooldown_on_last_reward`
-- Router-level rate limiting with `Retry-After` header
-- Unit tests with `pytest`
-- Custom threaded load-test script for throughput and latency metrics
+- Router-level rate limiting with `Retry-After` header  
+- Unit tests using pytest  
+- Custom threaded load-test script with latency (p50, p95, p99) and throughput metrics  
 
 ## Request Flow
 Flow for `POST /reward/decide`:
