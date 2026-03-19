@@ -15,6 +15,11 @@ Low-latency FastAPI microservice that returns deterministic reward decisions for
 - Unit tests with `pytest`
 - Custom threaded load-test script for throughput and latency metrics
 
+## Request Flow
+Flow for `POST /reward/decide`:
+
+[Reward decision flow diagram](docs/images/reward-decision-flow.png)
+
 ## Project Structure
 ```text
 app/
@@ -31,6 +36,8 @@ tests/
 scripts/
   load_test.py
 docs/
+  images/
+    .gitkeep
   performance_report_template.md
 ```
 
